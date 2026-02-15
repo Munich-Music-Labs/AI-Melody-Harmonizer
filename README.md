@@ -47,23 +47,93 @@ pip install -r requirements.txt
 ```
 
 ## Melody Harmonization
-1.　Put the musicxml  in the `inputs` folder;and simply run `harmonizer.py`;  
+1.　Put the MusicXML files in the `inputs` folder and run `harmonizer.py`. By default it uses the `DEFAULT_GENRE` configured in `config.py`.
 
    ```bash
-   shared-venv\Scripts\activate
+   source shared-venv/bin/activate
    python harmonizer.py
    ```
 
-2.　Wait and then the harmonized melodies will be saved in the `outputs` folder.  
+2.　To force a specific genre checkpoint:
+
+   ```bash
+   python harmonizer.py --genre jazz
+   ```
+
+3.　The harmonized files are saved to the `outputs` folder.  
   
 You can set the parameter RHYTHM_DENSITY∈[0, 1] in `config.py` to adjust the density of the generated chord progression. The higher the value of RHYTHM_DENSITY, the more chords will be generated, and vice versa.  
 
-## Use Your Own Dataset
-1.　Store all the lead sheets (MusicXML) in the `dataset.tgz` archive;  
-2.　Run `loader.py`, which will clean and generate `data_corpus.bin` + `chord_types.bin`;  
-3.　Run `model.py`, which will generate `weights.hdf5`.  
+## Dataset And Weights Layout
 
-After that, you can use `harmonizer.py` to harmonize music with chord progressions that fit the musical style of the new dataset.   
+Use this structure for baseline + per-genre fine-tuning:
+
+```text
+datasets/
+  baseline/
+    scoresheets/            # baseline lead sheets (MusicXML)
+    data_corpus.bin         # generated from baseline scoresheets
+  genres/
+    jazz/
+      scoresheets/          # jazz lead sheets
+      data_corpus.bin       # generated from jazz scoresheets
+    pop/
+      scoresheets/
+      data_corpus.bin
+  chord_types_global.bin    # shared chord vocabulary
+
+weights/
+  baseline/weights.keras
+  genres/
+    jazz/weights.keras
+    pop/weights.keras
+```
+
+## Baseline + Genre Fine-Tuning Workflow
+
+1. Put baseline score sheets in `datasets/baseline/scoresheets/`.
+
+2. Build baseline corpus and global vocabulary:
+
+   ```bash
+   python loader.py --genre baseline --build-global-vocab
+   ```
+
+3. Train baseline weights:
+
+   ```bash
+   python model.py --genre baseline --weights-out weights/baseline/weights.keras
+   ```
+
+4. Put genre score sheets in `datasets/genres/jazz/scoresheets/`.
+
+5. Build a genre corpus using the shared vocabulary:
+
+   ```bash
+   python loader.py --genre jazz --use-global-vocab --unknown-chord-policy map_to_R
+   ```
+
+6. Fine-tune genre weights from baseline:
+
+   ```bash
+   python model.py --genre jazz \
+     --base-weights weights/baseline/weights.keras \
+     --weights-out weights/genres/jazz/weights.keras
+   ```
+
+7. Harmonize using genre weights:
+
+   ```bash
+   python harmonizer.py --genre jazz
+   ```
+
+Notes:
+- `loader.py` now cleans corpus artifacts only; it does not delete baseline weights.
+- `loader.py` reads training score sheets from `datasets/<target>/scoresheets/`.
+- `model.py` prevents accidental overwrite by rejecting identical `--base-weights` and `--weights-out`.
+- The shared global vocabulary keeps baseline and genre output heads compatible.
+
+After training, you can use `harmonizer.py` to harmonize music with chord progressions that fit the selected musical style.   
   
 If you need to finetune the parameters, you can do so in `config.py`. It is not recommended to change the parameters in other files.
 

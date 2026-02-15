@@ -1,6 +1,6 @@
 import os
+import argparse
 import pickle
-import tarfile
 import numpy as np
 from copy import deepcopy
 from tqdm import trange
@@ -21,38 +21,18 @@ def quant_score(score):
     return score
 
 
-def get_filenames(input_dir):
+def get_filenames(input_dir, extensions=EXTENSION):
+    if not os.path.isdir(input_dir):
+        raise FileNotFoundError(f"Input directory not found: {input_dir}")
 
-    # Automatic Dataset Extraction
-    if input_dir == DATASET_PATH and not os.path.exists(input_dir):
-        archive_name = DATASET_ARCHIVE
-        if os.path.exists(archive_name):
-            print(f"[LOADER] Dataset folder not found. Extracting {archive_name}...")
-            try:
-                # Check structure
-                has_root = False
-                with tarfile.open(archive_name, "r:gz") as tar:
-                    m = tar.next()
-                    if m and m.name.startswith("dataset"):
-                        has_root = True
-                
-                # Extract
-                with tarfile.open(archive_name, "r:gz") as tar:
-                    if has_root:
-                         tar.extractall(path=".")
-                    else:
-                         os.makedirs(input_dir, exist_ok=True)
-                         tar.extractall(path=input_dir)
-                print("[LOADER] Extraction complete.")
-            except Exception as e:
-                print(f"[LOADER] Error extracting dataset: {e}")
-    
+    ext_set = {ext.lower() for ext in extensions} if extensions is not None else None
+
     # Use list comprehension for better performance
     filenames = [
         os.path.join(dirpath, this_file)
         for dirpath, dirlist, filelist in os.walk(input_dir)
         for this_file in filelist
-        if input_dir != DATASET_PATH or os.path.splitext(this_file)[-1] in EXTENSION
+        if ext_set is None or os.path.splitext(this_file)[-1].lower() in ext_set
     ]
     return filenames
 
@@ -116,11 +96,35 @@ def melody_reader(score):
     return melody_txt.tolist(), beat_txt.tolist(), key_txt.tolist(), chord_txt
 
 
-def convert_files(filenames, fromDataset=True):
+def normalize_chord_types(chord_types):
+    unique_ordered = list(dict.fromkeys(chord_types))
+    if "R" in unique_ordered:
+        unique_ordered.remove("R")
+    return ["R"] + unique_ordered
+
+
+def load_chord_types(chord_types_path):
+    if not os.path.exists(chord_types_path):
+        return None
+    with open(chord_types_path, "rb") as filepath:
+        return pickle.load(filepath)
+
+
+def convert_files(
+    filenames,
+    fromDataset=True,
+    corpus_path=CORPUS_PATH,
+    chord_types_path=CHORD_TYPES_PATH,
+    shared_chord_types=None,
+    unknown_chord_policy="skip_song",
+):
 
     print('\nConverting %d files...' %(len(filenames)))
     failed_list = []
     data_corpus = []
+    observed_chord_types = []
+    observed_chord_set = set()
+    shared_chord_set = set(shared_chord_types) if shared_chord_types is not None else None
 
     for filename_idx in trange(len(filenames)):
 
@@ -142,13 +146,27 @@ def convert_files(filenames, fromDataset=True):
             melody_txt, beat_txt, key_txt, chord_txt = melody_reader(score)
 
             if fromDataset:
+                if shared_chord_set is not None:
+                    unknown_chords = sorted({ch for ch in chord_txt if ch not in shared_chord_set})
+                    if unknown_chords:
+                        if unknown_chord_policy == "map_to_R":
+                            chord_txt = [ch if ch in shared_chord_set else "R" for ch in chord_txt]
+                        else:
+                            failed_list.append((filename, f"unknown chord types: {unknown_chords[:10]}"))
+                            continue
+
                 if len(melody_txt)==len(beat_txt) and len(beat_txt)==len(key_txt) and len(key_txt)==len(chord_txt):
                     song_data.append((melody_txt, beat_txt, key_txt, chord_txt))
+                    if shared_chord_set is None:
+                        for chord_type in chord_txt:
+                            if chord_type not in observed_chord_set:
+                                observed_chord_set.add(chord_type)
+                                observed_chord_types.append(chord_type)
                 
                 else:
                     failed_list.append((filename, 'length mismatch'))
                     song_data = []
-                    break
+                    continue
 
             else:
                 if len(melody_txt)!=len(beat_txt) or len(melody_txt)!=len(key_txt):
@@ -178,41 +196,108 @@ def convert_files(filenames, fromDataset=True):
             print(failed_file)
 
     if fromDataset:
-        chord_types = [song[3] for songs in data_corpus for song in songs]
-        chord_types = [item for sublist in chord_types for item in sublist]
-        chord_types = list(set(chord_types))
-        
-        # Only remove 'R' if it exists in the list
-        if 'R' in chord_types:
-            chord_types.remove('R')
-            chord_types = ['R'] + chord_types
-        elif len(chord_types) == 0:
-            # If no chord types found, use default
-            chord_types = ['R']
-        
+        if shared_chord_types is None:
+            chord_types = normalize_chord_types(observed_chord_types) if observed_chord_types else ["R"]
+        else:
+            chord_types = normalize_chord_types(shared_chord_types)
+
         print(f"Found {len(chord_types)} unique chord types")
 
-        with open(CHORD_TYPES_PATH, "wb") as filepath:
+        chord_dir = os.path.dirname(chord_types_path)
+        corpus_dir = os.path.dirname(corpus_path)
+        if chord_dir:
+            os.makedirs(chord_dir, exist_ok=True)
+        if corpus_dir:
+            os.makedirs(corpus_dir, exist_ok=True)
+
+        with open(chord_types_path, "wb") as filepath:
             pickle.dump(chord_types, filepath)
 
-        with open(CORPUS_PATH, "wb") as filepath:
+        with open(corpus_path, "wb") as filepath:
             pickle.dump(data_corpus, filepath)
     
     else:
         return data_corpus
 
 
-if __name__ == '__main__':
-
-    # Clean up old artifacts to ensure fresh training data
-    print("[LOADER] Cleaning up old binary files and weights...")
-    for path in [CORPUS_PATH, CHORD_TYPES_PATH, WEIGHTS_PATH]:
-        if os.path.exists(path):
+def _cleanup_targets(corpus_path, chord_types_path=None):
+    for path in [corpus_path, chord_types_path]:
+        if path and os.path.exists(path):
             try:
                 os.remove(path)
                 print(f"  - Deleted {path}")
             except OSError as e:
                 print(f"  - Error deleting {path}: {e}")
 
-    filenames = get_filenames(input_dir=DATASET_PATH)
-    convert_files(filenames)
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Build corpus files for baseline or genre datasets.")
+    parser.add_argument("--genre", default=DEFAULT_GENRE, help="Genre name. Use baseline for the base dataset.")
+    parser.add_argument(
+        "--dataset-dir",
+        default=None,
+        help="Override genre dataset root directory. Loader reads score sheets from <dataset-dir>/scoresheets.",
+    )
+    parser.add_argument("--corpus-path", default=None, help="Override output corpus path.")
+    parser.add_argument(
+        "--build-global-vocab",
+        action="store_true",
+        help="Rebuild the shared global chord vocabulary from this dataset.",
+    )
+    parser.add_argument(
+        "--use-global-vocab",
+        action="store_true",
+        help="Use the shared global chord vocabulary and filter unknown chords.",
+    )
+    parser.add_argument(
+        "--unknown-chord-policy",
+        choices=["skip_song", "map_to_R"],
+        default="skip_song",
+        help="How to handle chords not found in the global vocabulary.",
+    )
+    args = parser.parse_args()
+
+    if args.build_global_vocab and args.use_global_vocab:
+        raise ValueError("Choose either --build-global-vocab or --use-global-vocab, not both.")
+
+    genre = normalize_genre(args.genre)
+    scoresheets_dir = (
+        os.path.join(args.dataset_dir, "scoresheets")
+        if args.dataset_dir
+        else get_scoresheets_dir(genre)
+    )
+    corpus_path = args.corpus_path or get_corpus_path(genre)
+    chord_types_path = get_chord_types_path(genre)
+
+    if not args.build_global_vocab and not args.use_global_vocab:
+        args.use_global_vocab = os.path.exists(chord_types_path)
+        args.build_global_vocab = not args.use_global_vocab
+
+    print("[LOADER] Cleaning up old corpus artifacts...")
+    _cleanup_targets(corpus_path, chord_types_path if args.build_global_vocab else None)
+
+    shared_chord_types = None
+    if args.use_global_vocab:
+        shared_chord_types = load_chord_types(chord_types_path)
+        if not shared_chord_types:
+            raise FileNotFoundError(
+                f"Global chord vocabulary not found at {chord_types_path}. Run with --build-global-vocab first."
+            )
+
+    if not os.path.isdir(scoresheets_dir):
+        raise FileNotFoundError(
+            f"Missing score sheets directory: {scoresheets_dir}. Place MusicXML files in this folder first."
+        )
+
+    filenames = get_filenames(input_dir=scoresheets_dir)
+    if not filenames:
+        raise ValueError(f"No score sheets found in {scoresheets_dir}.")
+
+    convert_files(
+        filenames,
+        fromDataset=True,
+        corpus_path=corpus_path,
+        chord_types_path=chord_types_path,
+        shared_chord_types=shared_chord_types,
+        unknown_chord_policy=args.unknown_chord_policy,
+    )

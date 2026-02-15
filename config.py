@@ -1,11 +1,55 @@
+import os
+
 # Path setting
-DATASET_PATH = "dataset"
-DATASET_ARCHIVE = "dataset.tgz"
-CORPUS_PATH = "data_corpus.bin"
-CHORD_TYPES_PATH = 'chord_types.bin'
-WEIGHTS_PATH = 'weights.keras'
+DATASETS_ROOT = "datasets"
+WEIGHTS_ROOT = "weights"
+BASELINE_GENRE = "baseline"
+DEFAULT_GENRE = BASELINE_GENRE
+
+CHORD_TYPES_GLOBAL_PATH = os.path.join(DATASETS_ROOT, "chord_types_global.bin")
 INPUTS_PATH = "inputs"
 OUTPUTS_PATH = "outputs"
+
+
+def normalize_genre(genre=None):
+    if genre is None:
+        genre = DEFAULT_GENRE
+    genre = str(genre).strip()
+    return BASELINE_GENRE if genre in ("", BASELINE_GENRE) else genre
+
+
+def get_dataset_dir(genre=None):
+    genre = normalize_genre(genre)
+    if genre == BASELINE_GENRE:
+        return os.path.join(DATASETS_ROOT, BASELINE_GENRE)
+    return os.path.join(DATASETS_ROOT, "genres", genre)
+
+
+def get_scoresheets_dir(genre=None):
+    return os.path.join(get_dataset_dir(genre), "scoresheets")
+
+
+def get_corpus_path(genre=None):
+    return os.path.join(get_dataset_dir(genre), "data_corpus.bin")
+
+
+def get_weights_path(genre=None):
+    genre = normalize_genre(genre)
+    if genre == BASELINE_GENRE:
+        return os.path.join(WEIGHTS_ROOT, BASELINE_GENRE, "weights.keras")
+    return os.path.join(WEIGHTS_ROOT, "genres", genre, "weights.keras")
+
+
+def get_chord_types_path(_genre=None):
+    # Shared global vocabulary for baseline and every genre.
+    return CHORD_TYPES_GLOBAL_PATH
+
+
+# Backward-compatible constants mapped to baseline artifacts.
+DATASET_PATH = get_dataset_dir(BASELINE_GENRE)
+CORPUS_PATH = get_corpus_path(BASELINE_GENRE)
+CHORD_TYPES_PATH = get_chord_types_path(BASELINE_GENRE)
+WEIGHTS_PATH = get_weights_path(BASELINE_GENRE)
 
 # 'loader.py'
 EXTENSION = ['.musicxml', '.xml', '.mxl']

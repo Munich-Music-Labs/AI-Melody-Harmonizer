@@ -1,5 +1,6 @@
 import os
 import math
+import argparse
 import pickle
 import zipfile
 import numpy as np
@@ -277,15 +278,26 @@ def build_model(segment_length, rnn_size, num_layers, dropout, weights_path=None
 
 def train_model(data, data_val, segment_length=SEGMENT_LENGTH, 
                 rnn_size=RNN_SIZE, num_layers=NUM_LAYERS, dropout=DROPOUT,
-                epochs=EPOCHS, verbose=1, weights_path=WEIGHTS_PATH):
+                epochs=EPOCHS, verbose=1, weights_path=WEIGHTS_PATH,
+                chord_types_path=CHORD_TYPES_PATH, base_weights_path=None):
 
-    with open(CHORD_TYPES_PATH, "rb") as filepath:
+    with open(chord_types_path, "rb") as filepath:
         chord_nums = len(pickle.load(filepath))
-        
-    model = build_model(segment_length, rnn_size, num_layers, dropout)
+
+    model = build_model(
+        segment_length,
+        rnn_size,
+        num_layers,
+        dropout,
+        weights_path=base_weights_path,
+        chord_types_path=chord_types_path,
+    )
 
     # Checkpoint
     monitor = 'val_loss' if len(data_val[0]) > 0 else 'loss'
+    weights_dir = os.path.dirname(weights_path)
+    if weights_dir:
+        os.makedirs(weights_dir, exist_ok=True)
     checkpoint = ModelCheckpoint(filepath=weights_path, monitor=monitor,
                                  verbose=0, save_best_only=True, mode='min')
 
@@ -420,19 +432,47 @@ def append_history_to_csv(history, model, train_size, val_size, csv_path="traini
 
 
 if __name__ == "__main__":
-    data, data_val = create_training_data()
+    parser = argparse.ArgumentParser(description="Train baseline model or fine-tune a genre model.")
+    parser.add_argument("--genre", default=DEFAULT_GENRE, help="Genre name. baseline for default model.")
+    parser.add_argument("--corpus-path", default=None, help="Override corpus input path.")
+    parser.add_argument("--chord-types-path", default=None, help="Override chord vocabulary path.")
+    parser.add_argument("--base-weights", default=None, help="Optional baseline weights to initialize from.")
+    parser.add_argument("--weights-out", default=None, help="Output path for trained weights.")
+    parser.add_argument("--epochs", type=int, default=EPOCHS, help="Epoch override.")
+    args = parser.parse_args()
+
+    genre = normalize_genre(args.genre)
+    corpus_path = args.corpus_path or get_corpus_path(genre)
+    chord_types_path = args.chord_types_path or get_chord_types_path(genre)
+    weights_out = args.weights_out or get_weights_path(genre)
+    base_weights = args.base_weights
+
+    if base_weights and not os.path.exists(base_weights):
+        raise FileNotFoundError(f"Base weights not found: {base_weights}")
+
+    if base_weights and os.path.abspath(base_weights) == os.path.abspath(weights_out):
+        raise ValueError("--base-weights and --weights-out must be different paths.")
+
+    data, data_val = create_training_data(corpus_path=corpus_path, chord_types_path=chord_types_path)
     
     train_size = len(data[0])
     val_size = len(data_val[0])
     
-    history, model = train_model(data, data_val)
+    history, model = train_model(
+        data,
+        data_val,
+        epochs=args.epochs,
+        weights_path=weights_out,
+        chord_types_path=chord_types_path,
+        base_weights_path=base_weights,
+    )
     plot_history(history, model, train_size, val_size)
     append_history_to_csv(history, model, train_size, val_size)
 
     # Zip weights for easy download/archiving
-    if os.path.exists(WEIGHTS_PATH):
-        zip_path = WEIGHTS_PATH + '.zip'
+    if os.path.exists(weights_out):
+        zip_path = weights_out + '.zip'
         print(f"\n[INFO] Zipping weights to {zip_path}...")
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            zipf.write(WEIGHTS_PATH, os.path.basename(WEIGHTS_PATH))
+            zipf.write(weights_out, os.path.basename(weights_out))
         print("[INFO] Done.")

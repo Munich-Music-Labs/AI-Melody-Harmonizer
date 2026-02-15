@@ -1,6 +1,13 @@
 # Dataset files
-dataset/
+datasets/
+datasets/**/data_corpus.bin
+datasets/chord_types_global.bin
 outputs/
+weights/
+weights/**/*.keras
+weights/**/*.keras.zip
+training_history.csv
+training_history.png
 
 # Python bytecode / caches
 __pycache__/

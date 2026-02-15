@@ -1,6 +1,6 @@
 import os
 import warnings
-import pickle
+import argparse
 import numpy as np
 from config import *
 from music21 import *
@@ -8,28 +8,22 @@ from tqdm import trange
 from copy import deepcopy
 from model import build_model
 from samplings import gamma_sampling
-from loader import get_filenames, convert_files
+from loader import get_filenames, convert_files, load_chord_types
 
 # force CPU-only and suppress TF warnings
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 warnings.filterwarnings("ignore")
 
-# Load chord types once
-with open(CHORD_TYPES_PATH, "rb") as fp:
-    chord_types = pickle.load(fp)
-
 # Step-by-step inference (autoregressive)
 # We cannot batch like before because each chord depends on the previous generated chord.
 INFER_BATCH_SIZE = 1 
 
 def generate_chord(chord_model, melody_data, beat_data, key_data,
+                   chord_types,
                    segment_length=SEGMENT_LENGTH, rhythm_gamma=RHYTHM_DENSITY,
                    chord_per_bar=CHORD_PER_BAR):
-    
-    chord_types_dict = {chord_types[i]: i for i in range(len(chord_types))}
-    # Reverse mapping if needed (not used here for prediction)
-    
+
     chord_data_list = []
 
     for song_idx, song_melody in enumerate(melody_data):
@@ -118,6 +112,7 @@ def watermark(score, filename, water_mark=WATER_MARK):
     return score
 
 def export_music(score, beat_data, chord_data, filename,
+                 chord_types,
                  repeat_chord=REPEAT_CHORD, outputs_path=OUTPUTS_PATH,
                  water_mark=WATER_MARK):
 
@@ -162,11 +157,33 @@ def export_music(score, beat_data, chord_data, filename,
     if water_mark:
         final_score = watermark(final_score, stem)
 
+    os.makedirs(outputs_path, exist_ok=True)
     output_file = f"{outputs_path}/{stem}.mxl"
     final_score.write('mxl', fp=output_file)
     print(f"Exported to {output_file}")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate harmonization from input melodies.")
+    parser.add_argument("--genre", default=DEFAULT_GENRE, help="Genre weights to use for harmonization.")
+    parser.add_argument("--weights-path", default=None, help="Optional explicit model weights path.")
+    parser.add_argument("--chord-types-path", default=None, help="Optional explicit chord vocabulary path.")
+    args = parser.parse_args()
+
+    genre = normalize_genre(args.genre)
+    weights_path = args.weights_path or get_weights_path(genre)
+    chord_types_path = args.chord_types_path or get_chord_types_path(genre)
+
+    if not os.path.exists(weights_path):
+        raise FileNotFoundError(
+            f"Missing weights for genre '{genre}' at {weights_path}. Train or fine-tune this genre first."
+        )
+
+    chord_types = load_chord_types(chord_types_path)
+    if not chord_types:
+        raise FileNotFoundError(
+            f"Missing shared chord vocabulary at {chord_types_path}. Run loader with --build-global-vocab first."
+        )
+
     print("Loading Inputs...")
     files = get_filenames(input_dir=INPUTS_PATH)
     if not files:
@@ -178,12 +195,12 @@ if __name__ == "__main__":
     print("Loading Model...")
     # Weights are loaded inside build_model if path is provided
     model = build_model(SEGMENT_LENGTH, RNN_SIZE, NUM_LAYERS, DROPOUT,
-                        weights_path=WEIGHTS_PATH, training=False)
+                        weights_path=weights_path, chord_types_path=chord_types_path, training=False)
 
     print("Generating Harmonies...")
     for md, bd, kd, score_obj, fname in data:
         print(f"Processing {os.path.basename(fname)}...")
-        chords = generate_chord(model, md, bd, kd)
+        chords = generate_chord(model, md, bd, kd, chord_types=chord_types)
         
         # DEBUG: Analyze generated chords for the first song
         unique_chords = np.unique([c for song in chords for c in song])
@@ -194,4 +211,4 @@ if __name__ == "__main__":
         print(f"DEBUG: Sample chords (excluding 'R'): {labels_sample[:20]}")
         print(f"DEBUG: Total 'R' (Rest) vs Total Indices: {sum(1 for song in chords for c in song if chord_types[int(c)] == 'R')} / {sum(len(s) for s in chords)}")
 
-        export_music(score_obj, bd, chords, fname)
+        export_music(score_obj, bd, chords, fname, chord_types=chord_types)

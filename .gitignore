@@ -1,11 +1,20 @@
-# Dataset files
-datasets/
-datasets/**/data_corpus.bin
-datasets/chord_types_global.bin
-outputs/
-weights/
-weights/**/*.keras
-weights/**/*.keras.zip
+# Keep folder structure, ignore files inside
+datasets/**
+!datasets/
+!datasets/**/
+!datasets/**/.gitkeep
+
+outputs/**
+!outputs/
+!outputs/**/
+!outputs/**/.gitkeep
+
+weights/**
+!weights/
+!weights/**/
+!weights/**/.gitkeep
+
+# Other generated files
 training_history.csv
 training_history.png
 

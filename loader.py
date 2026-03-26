@@ -1,9 +1,11 @@
 import os
 import argparse
 import pickle
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 from copy import deepcopy
-from tqdm import trange
+from tqdm import tqdm, trange
 from music21 import *
 from config import *
 
@@ -110,6 +112,26 @@ def load_chord_types(chord_types_path):
         return pickle.load(filepath)
 
 
+def _process_single_file(filename):
+    """Worker function for multiprocessing. Parses, quantizes, and extracts
+    melody data from a single MusicXML file. Must be top-level for pickling."""
+    try:
+        score = converter.parse(filename)
+        score = score.parts[0]
+        score = quant_score(score)
+        melody_txt, beat_txt, key_txt, chord_txt = melody_reader(score)
+        return {
+            "filename": filename,
+            "melody_txt": melody_txt,
+            "beat_txt": beat_txt,
+            "key_txt": key_txt,
+            "chord_txt": chord_txt,
+            "error": None,
+        }
+    except Exception as e:
+        return {"filename": filename, "error": e}
+
+
 def convert_files(
     filenames,
     fromDataset=True,
@@ -117,35 +139,38 @@ def convert_files(
     chord_types_path=CHORD_TYPES_PATH,
     shared_chord_types=None,
     unknown_chord_policy="skip_song",
+    max_workers=LOADER_MAX_WORKERS,
 ):
 
     print('\nConverting %d files...' %(len(filenames)))
     failed_list = []
     data_corpus = []
-    observed_chord_types = []
-    observed_chord_set = set()
-    shared_chord_set = set(shared_chord_types) if shared_chord_types is not None else None
 
-    for filename_idx in trange(len(filenames)):
+    if fromDataset:
+        observed_chord_types = []
+        observed_chord_set = set()
+        shared_chord_set = set(shared_chord_types) if shared_chord_types is not None else None
 
-        # Read this music file
-        filename = filenames[filename_idx]
-        
-        try:
-            
-            score = converter.parse(filename)
-            score = score.parts[0]
-            if not fromDataset:
-                original_score = deepcopy(score)
-            song_data = []
-            melody_data = []
-            beat_data = []
-            key_data = []
+        mp_context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=max_workers, mp_context=mp_context) as executor:
+            futures = {
+                executor.submit(_process_single_file, fn): fn
+                for fn in filenames
+            }
 
-            score = quant_score(score)
-            melody_txt, beat_txt, key_txt, chord_txt = melody_reader(score)
+            for future in tqdm(as_completed(futures), total=len(filenames), desc="Processing"):
+                result = future.result()
+                filename = result["filename"]
 
-            if fromDataset:
+                if result["error"] is not None:
+                    failed_list.append((filename, result["error"]))
+                    continue
+
+                melody_txt = result["melody_txt"]
+                beat_txt = result["beat_txt"]
+                key_txt = result["key_txt"]
+                chord_txt = result["chord_txt"]
+
                 if shared_chord_set is not None:
                     unknown_chords = sorted({ch for ch in chord_txt if ch not in shared_chord_set})
                     if unknown_chords:
@@ -155,41 +180,49 @@ def convert_files(
                             failed_list.append((filename, f"unknown chord types: {unknown_chords[:10]}"))
                             continue
 
-                if len(melody_txt)==len(beat_txt) and len(beat_txt)==len(key_txt) and len(key_txt)==len(chord_txt):
-                    song_data.append((melody_txt, beat_txt, key_txt, chord_txt))
+                if len(melody_txt) == len(beat_txt) and len(beat_txt) == len(key_txt) and len(key_txt) == len(chord_txt):
+                    data_corpus.append([(melody_txt, beat_txt, key_txt, chord_txt)])
                     if shared_chord_set is None:
                         for chord_type in chord_txt:
                             if chord_type not in observed_chord_set:
                                 observed_chord_set.add(chord_type)
                                 observed_chord_types.append(chord_type)
-                
                 else:
                     failed_list.append((filename, 'length mismatch'))
-                    song_data = []
-                    continue
 
-            else:
-                if len(melody_txt)!=len(beat_txt) or len(melody_txt)!=len(key_txt):
+    else:
+        shared_chord_set = set(shared_chord_types) if shared_chord_types is not None else None
+
+        for filename_idx in trange(len(filenames)):
+            filename = filenames[filename_idx]
+            try:
+                score = converter.parse(filename)
+                score = score.parts[0]
+                original_score = deepcopy(score)
+                melody_data = []
+                beat_data = []
+                key_data = []
+
+                score = quant_score(score)
+                melody_txt, beat_txt, key_txt, chord_txt = melody_reader(score)
+
+                if len(melody_txt) != len(beat_txt) or len(melody_txt) != len(key_txt):
                     min_len = min(len(melody_txt), len(beat_txt))
                     melody_txt = melody_txt[:min_len]
                     beat_txt = beat_txt[:min_len]
                     key_txt = key_txt[:min_len]
-                    
+
                 melody_data.append(melody_txt)
                 beat_data.append(beat_txt)
                 key_data.append(key_txt)
-            
-            if not fromDataset:
-                data_corpus.append((melody_data, beat_data, key_data, original_score, filename))
-            
-            elif len(song_data)>0:
-                data_corpus.append(song_data)
 
-        except Exception as e:
-            failed_list.append((filename, e))
+                data_corpus.append((melody_data, beat_data, key_data, original_score, filename))
+
+            except Exception as e:
+                failed_list.append((filename, e))
 
     print('Successfully converted %d files.' %(len(filenames)-len(failed_list)))
-    if len(failed_list)>0:
+    if len(failed_list) > 0:
         print('Failed numbers: '+str(len(failed_list)))
         print('Failed to process: \n')
         for failed_file in failed_list:
@@ -215,7 +248,7 @@ def convert_files(
 
         with open(corpus_path, "wb") as filepath:
             pickle.dump(data_corpus, filepath)
-    
+
     else:
         return data_corpus
 

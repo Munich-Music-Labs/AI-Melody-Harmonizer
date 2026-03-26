@@ -53,6 +53,7 @@ WEIGHTS_PATH = get_weights_path(BASELINE_GENRE)
 
 # 'loader.py'
 EXTENSION = ['.musicxml', '.xml', '.mxl']
+LOADER_MAX_WORKERS = 10
 
 # '.model.py'
 VAL_RATIO = 0.1

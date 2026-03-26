@@ -1,0 +1,17 @@
+[project]
+name = "ai-melody-harmonizer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib>=3.10.8",
+    "music21>=9.1.0",
+    "numpy>=2.0.0",
+    "nvidia-cublas-cu12>=12.9.2.10",
+    "nvidia-cuda-nvrtc-cu12>=12.9.86",
+    "nvidia-cudnn-cu12>=9.20.0.48",
+    "samplings>=0.1.7",
+    "tensorflow>=2.18.0",
+    "tqdm>=4.66.1",
+]

@@ -13,3 +13,8 @@ tqdm>=4.66.1
 # Optional: your custom or local package
 samplings  # replace with exact version or local path if needed
 matplotlib
+
+# NVIDIA GPU libraries (CUDA 12 - required for TensorFlow GPU support)
+nvidia-cudnn-cu12
+nvidia-cuda-nvrtc-cu12
+nvidia-cublas-cu12

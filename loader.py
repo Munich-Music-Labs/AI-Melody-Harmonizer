@@ -11,7 +11,7 @@ from config import *
 
 def quant_score(score):
     
-    for element in score.flat:
+    for element in score.flatten():
         onset = np.ceil(element.offset/0.25)*0.25
 
         if isinstance(element, note.Note) or isinstance(element, note.Rest) or isinstance(element, chord.Chord):
@@ -46,7 +46,7 @@ def melody_reader(score):
     sharps = 0
     chord_token = 'R'
     
-    for element in score.flat:
+    for element in score.flatten():
         if isinstance(element, note.Note):
             token = element.pitch.midi
             duration = int(element.quarterLength*4)

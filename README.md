@@ -83,6 +83,7 @@ This project builds upon and enhances the excellent original work.
 
 ### Repository Cleanup
 
+- Switched dependency and environment management to [uv](https://docs.astral.sh/uv/) — `pyproject.toml` + `uv.lock` are the source of truth, with Python 3.10 pinned via `.python-version`. A `requirements.txt` is kept as a pip fallback.
 - Modularized `model.py` structure and removed redundant logic in data loading.
 - Removed non-essential artefacts (`.bin`) from git; generation workflow is now code-driven.
 - Migrated datasets to `.tgz` archives.
@@ -91,11 +92,28 @@ This project builds upon and enhances the excellent original work.
 
 ## Installation
 
+This project uses [**uv**](https://docs.astral.sh/uv/) for dependency and environment management. Python 3.10 is pinned via `.python-version` and uv will pick it up automatically.
+
+### Recommended: uv
+
+```bash
+# Install uv once: https://docs.astral.sh/uv/getting-started/installation/
+uv sync
+```
+
+`uv sync` reads `pyproject.toml` + `uv.lock`, creates a virtual environment in `.venv/`, and installs every dependency at the locked version. You don't need to activate the venv manually — prefix commands with `uv run` (see below).
+
+### Alternative: pip + venv
+
+If you'd rather not use uv, a `requirements.txt` is kept as a fallback:
+
 ```bash
 python3 -m venv shared-venv
 source shared-venv/bin/activate
 pip install -r requirements.txt
 ```
+
+In this case, activate `shared-venv` before running any of the commands below and drop the `uv run` prefix.
 
 ---
 
@@ -105,14 +123,13 @@ pip install -r requirements.txt
 2. Run the harmonizer (uses `DEFAULT_GENRE` from `config.py`):
 
    ```bash
-   source shared-venv/bin/activate
-   python harmonizer.py
+   uv run python harmonizer.py
    ```
 
 3. To force a specific genre checkpoint:
 
    ```bash
-   python harmonizer.py --genre jazz
+   uv run python harmonizer.py --genre jazz
    ```
 
 4. Harmonized files are saved to the `outputs/` folder.
@@ -157,13 +174,13 @@ End-to-end recipe for training a baseline model and fine-tuning per-genre varian
 2. Build the baseline corpus and the global vocabulary:
 
    ```bash
-   python loader.py --genre baseline --build-global-vocab
+   uv run python loader.py --genre baseline --build-global-vocab
    ```
 
 3. Train baseline weights:
 
    ```bash
-   python model.py --genre baseline --weights-out weights/baseline/weights.keras
+   uv run python model.py --genre baseline --weights-out weights/baseline/weights.keras
    ```
 
 4. Put genre score sheets in `datasets/genres/jazz/scoresheets/`.
@@ -171,13 +188,13 @@ End-to-end recipe for training a baseline model and fine-tuning per-genre varian
 5. Build a genre corpus using the shared vocabulary:
 
    ```bash
-   python loader.py --genre jazz --use-global-vocab --unknown-chord-policy map_to_R
+   uv run python loader.py --genre jazz --use-global-vocab --unknown-chord-policy map_to_R
    ```
 
 6. Fine-tune genre weights from the baseline:
 
    ```bash
-   python model.py --genre jazz \
+   uv run python model.py --genre jazz \
      --base-weights weights/baseline/weights.keras \
      --weights-out weights/genres/jazz/weights.keras
    ```
@@ -185,7 +202,7 @@ End-to-end recipe for training a baseline model and fine-tuning per-genre varian
 7. Harmonize with the new genre weights:
 
    ```bash
-   python harmonizer.py --genre jazz
+   uv run python harmonizer.py --genre jazz
    ```
 
 **Notes**

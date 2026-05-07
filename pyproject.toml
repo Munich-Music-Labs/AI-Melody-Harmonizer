@@ -1,7 +1,7 @@
 [project]
 name = "ai-melody-harmonizer"
 version = "0.1.0"
-description = "Add your description here"
+description = "Generate chord progressions from a melody with flexible harmonic rhythm and controllable harmonic density."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -1,18 +1,37 @@
+# AI Melody Harmonizer
 
-# Generating Chords from Melody with Flexible Harmonic Rhythm and Controllable Harmonic Density
+Generate chord progressions from a melody with flexible harmonic rhythm and controllable harmonic density.
 
-This is the source code of AutoHarmonizer2 an harmonic density-controllable melody harmonization system with flexible harmonic rhythm, trained/validated on Wikifonia.org's lead sheet dataset.  
-  
-This work is an adaptation to be integrated in https://pianoml.org.
+**AI Melody Harmonizer** is a harmonic-density-controllable melody harmonization system. The baseline model is bootstrapped from the [Wikifonia.org](http://www.wikifonia.org/) lead sheet dataset (used in the original paper), and we are actively gathering additional data to fine-tune the model toward genre-specific styles (jazz, pop, etc.).
 
-This work is derived from original paper: [arXiv paper](https://arxiv.org/abs/2112.11122). by Shangda Wu, Yue Yang, Zhaowen Wang, Xiaobing Li, Maosong Sun and a fork of the original repository available at https://github.com/sander-wood/autoharmonizer
+> **Built on the original [AutoHarmonizer](https://github.com/sander-wood/autoharmonizer) by [Sander Wood](https://github.com/sander-wood) (Shangda Wu).**
+> This project is a fork of that repository and an implementation of the paper [*Generating Chord Progression from Melody with Flexible Harmonic Rhythm and Controllable Harmonic Density*](https://arxiv.org/abs/2112.11122) by Shangda Wu, Yue Yang, Zhaowen Wang, Xiaobing Li, and Maosong Sun.
+> Released under the MIT License (© 2021 Sander Wood) — see [LICENSE](LICENSE). All credit for the original architecture and research goes to the upstream authors; this fork only adapts and extends their work.
 
+---
 
+## Table of Contents
+
+- [Background](#background)
+- [What's New in This Fork](#whats-new-in-this-fork)
+- [Installation](#installation)
+- [Quick Start: Harmonize a Melody](#quick-start-harmonize-a-melody)
+- [Dataset and Weights Layout](#dataset-and-weights-layout)
+- [Training Workflow](#training-workflow)
+- [Model Performance](#model-performance)
+- [Acknowledgments and Credits](#acknowledgments-and-credits)
+- [Bibliography](#bibliography)
+- [License](#license)
+
+---
+
+## Background
 
 ### What is harmonization?
 
-Harmonization is the process of creating or adding chords (and sometimes voice-leading) that support a given melody in a musically coherent and stylistically appropriate way.  
-In practice it means: given a single-line melody (or a lead sheet with melody + chords symbols), produce a full harmonic accompaniment — usually 3–4 voices — that sounds natural in a chosen style (classical, jazz, pop, baroque chorale, etc.).
+Harmonization is the process of creating or adding chords (and sometimes voice-leading) that support a given melody in a musically coherent and stylistically appropriate way.
+
+In practice it means: given a single-line melody (or a lead sheet with melody + chord symbols), produce a full harmonic accompaniment — usually 3–4 voices — that sounds natural in a chosen style (classical, jazz, pop, baroque chorale, etc.).
 
 ### Why is harmonization difficult?
 
@@ -21,52 +40,90 @@ Even for experienced musicians, good harmonization is hard because it simultaneo
 - harmonic correctness (functional harmony, chord grammar of the style)
 - voice-leading rules (smooth motion, avoid forbidden parallels, proper resolution of dissonances)
 - melodic contour preservation (the original tune must still feel like the most important line)
-- style & idiom (baroque ≠ romantic ≠ bebop ≠ modern pop)
-- balance between surprise & predictability
+- style and idiom (baroque ≠ romantic ≠ bebop ≠ modern pop)
+- balance between surprise and predictability
 - avoiding overused or cliché progressions when not wanted
 - handling modulations, secondary functions, chromaticism, modal mixture…
 
-Humans develop an intuition for these trade-offs over many years. Teaching a machine to make similar aesthetic decisions — without overfitting to one narrow style or producing bland “textbook” results — is currently one of the most challenging open problems in symbolic music generation.
+Humans develop intuition for these trade-offs over many years. Teaching a machine to make similar aesthetic decisions — without overfitting to one narrow style or producing bland "textbook" results — remains one of the most challenging open problems in symbolic music generation.
 
+---
 
-## Repository Status
+## What's New in This Fork
 
-This project builds upon and enhances the excellent original work, with the goal of making it ready for integration into the open-source https://pianoml.org library.
+This project builds upon and enhances the excellent original work.
 
+### Architectural Improvements
 
+- **Fused inputs.** Melody, beat, and key are now concatenated *before* the LSTM layers. The model processes `[Note + Rhythm + Key]` as a single unified context instead of three isolated streams.
+- **Native embeddings.** Replaced the expensive `OneHot + Dense` blocks with `keras.layers.Embedding`, which drastically reduces RAM/VRAM usage and gives a richer semantic representation of musical concepts.
 
-See [UPGRADE_NOTES](UPGRADE_NOTES.md) for changes made to the original project.
+### Dependency Upgrades
 
-  
-## Install
-  
+| Package      | Before  | After     | Why                          |
+|--------------|---------|-----------|------------------------------|
+| TensorFlow   | 2.14.0  | ≥ 2.18.0  | Native NumPy 2 support       |
+| NumPy        | —       | ≥ 2.0.0   | Explicitly pinned            |
+| music21      | 7.3.3   | ≥ 9.1.0   | NumPy 2 compatibility        |
+
+### Memory and Performance Optimizations (`model.py`)
+
+**`DataGenerator`**
+- Yields integer indices (`uint8` / `uint16`) instead of massive one-hot float arrays — vectors are now built on the GPU via the Embedding layers.
+- Conversion to NumPy arrays with optimized dtypes (`uint8` / `uint16`).
+- Added `on_epoch_end()` for efficient shuffling via indices.
+- Indexing by indices instead of repeated slicing.
+- ~8× memory reduction for MIDI values (`uint8` vs `int64`).
+- Fixes CPU→GPU bandwidth bottlenecks and RAM saturation.
+
+**`create_training_data()`**
+- Pre-allocation of NumPy arrays (avoids repeated `append`).
+- Optimized dtypes: `uint8` for melody/beat/key, `uint16` for chords.
+- Final trim to free unused space.
+
+### Repository Cleanup
+
+- Modularized `model.py` structure and removed redundant logic in data loading.
+- Removed non-essential artefacts (`.bin`) from git; generation workflow is now code-driven.
+- Migrated datasets to `.tgz` archives.
+
+---
+
+## Installation
+
 ```bash
 python3 -m venv shared-venv
 source shared-venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Melody Harmonization
-1.　Put the MusicXML files in the `inputs` folder and run `harmonizer.py`. By default it uses the `DEFAULT_GENRE` configured in `config.py`.
+---
+
+## Quick Start: Harmonize a Melody
+
+1. Put your MusicXML files in the `inputs/` folder.
+2. Run the harmonizer (uses `DEFAULT_GENRE` from `config.py`):
 
    ```bash
    source shared-venv/bin/activate
    python harmonizer.py
    ```
 
-2.　To force a specific genre checkpoint:
+3. To force a specific genre checkpoint:
 
    ```bash
    python harmonizer.py --genre jazz
    ```
 
-3.　The harmonized files are saved to the `outputs` folder.  
-  
-You can set the parameter RHYTHM_DENSITY∈[0, 1] in `config.py` to adjust the density of the generated chord progression. The higher the value of RHYTHM_DENSITY, the more chords will be generated, and vice versa.  
+4. Harmonized files are saved to the `outputs/` folder.
 
-## Dataset And Weights Layout
+> **Tip:** Adjust `RHYTHM_DENSITY ∈ [0, 1]` in `config.py` to control how many chords are generated. Higher values produce denser progressions.
 
-Use this structure for baseline + per-genre fine-tuning:
+---
+
+## Dataset and Weights Layout
+
+Use this structure for the baseline plus per-genre fine-tuning:
 
 ```text
 datasets/
@@ -89,11 +146,15 @@ weights/
     pop/weights.keras
 ```
 
-## Baseline + Genre Fine-Tuning Workflow
+---
+
+## Training Workflow
+
+End-to-end recipe for training a baseline model and fine-tuning per-genre variants.
 
 1. Put baseline score sheets in `datasets/baseline/scoresheets/`.
 
-2. Build baseline corpus and global vocabulary:
+2. Build the baseline corpus and the global vocabulary:
 
    ```bash
    python loader.py --genre baseline --build-global-vocab
@@ -113,7 +174,7 @@ weights/
    python loader.py --genre jazz --use-global-vocab --unknown-chord-policy map_to_R
    ```
 
-6. Fine-tune genre weights from baseline:
+6. Fine-tune genre weights from the baseline:
 
    ```bash
    python model.py --genre jazz \
@@ -121,54 +182,72 @@ weights/
      --weights-out weights/genres/jazz/weights.keras
    ```
 
-7. Harmonize using genre weights:
+7. Harmonize with the new genre weights:
 
    ```bash
    python harmonizer.py --genre jazz
    ```
 
-Notes:
-- `loader.py` now cleans corpus artifacts only; it does not delete baseline weights.
+**Notes**
+
+- `loader.py` cleans corpus artefacts only; it does not delete baseline weights.
 - `loader.py` reads training score sheets from `datasets/<target>/scoresheets/`.
-- `model.py` prevents accidental overwrite by rejecting identical `--base-weights` and `--weights-out`.
+- `model.py` prevents accidental overwrites by rejecting identical `--base-weights` and `--weights-out`.
 - The shared global vocabulary keeps baseline and genre output heads compatible.
+- Most parameters can be tuned in `config.py`. Changing parameters in other files is not recommended.
 
-After training, you can use `harmonizer.py` to harmonize music with chord progressions that fit the selected musical style.   
-  
-If you need to finetune the parameters, you can do so in `config.py`. It is not recommended to change the parameters in other files.
+---
 
-
-## Model performance
+## Model Performance
 
 | Best Val Loss | Train Loss @ Best | Best Val Acc | Train Acc @ Best | Best Epoch |
 |---------------|-------------------|--------------|------------------|------------|
 | 0.41651       | 0.36988           | 0.93393      | 0.92914          | 3          |
 
-- Validation Loss of 0.41651 reasonable for NLL harmonization
-- train is still noticeably better than val (gap ~0.047)
-- 93.393% impressive accuracy
-- val acc > train acc (by ~0.48%)
+- Validation loss of **0.41651** is reasonable for NLL harmonization.
+- Training is still noticeably better than validation (gap ≈ 0.047).
+- **93.39%** validation accuracy.
+- Validation accuracy slightly exceeds training accuracy (by ≈ 0.48%).
 
 ![Training history](training_history.png)
 
+---
+
+## Acknowledgments and Credits
+
+This project would not exist without the work of the original authors. Please credit them when using or referencing this codebase.
+
+- **Original author and upstream repository:** [Sander Wood](https://github.com/sander-wood) (Shangda Wu) — [`sander-wood/autoharmonizer`](https://github.com/sander-wood/autoharmonizer). The core architecture, training pipeline, and original implementation are his work.
+- **Paper authors:** Shangda Wu, Yue Yang, Zhaowen Wang, Xiaobing Li, and Maosong Sun — [*Generating Chord Progression from Melody with Flexible Harmonic Rhythm and Controllable Harmonic Density*](https://arxiv.org/abs/2112.11122) (arXiv:2112.11122).
+- **Baseline training data:** [Wikifonia.org](http://www.wikifonia.org/) lead sheet dataset (as used in the original paper). Additional genre-specific datasets are being collected for fine-tuning.
+
+This fork adds engineering improvements (memory optimizations, native embeddings, fused inputs, dependency upgrades, baseline + per-genre fine-tuning workflow). All conceptual credit for the harmonization model itself belongs to the upstream authors.
+
+---
+
 ## Bibliography
 
-> Wu, S., Yang, Y., Wang, Z., Li, X., & Sun, M. (2023). Generating Chord Progression from Melody with Flexible Harmonic Rhythm and Controllable Harmonic Density. arXiv:2112.11122 [cs.SD]. [https://arxiv.org/abs/2112.11122](https://arxiv.org/abs/2112.11122)
+> Wu, S., Yang, Y., Wang, Z., Li, X., & Sun, M. (2023). *Generating Chord Progression from Melody with Flexible Harmonic Rhythm and Controllable Harmonic Density.* arXiv:2112.11122 [cs.SD]. <https://arxiv.org/abs/2112.11122>
 
-```
+```bibtex
 @misc{wu2023generatingchordprogressionmelody,
-  title={Generating Chord Progression from Melody with Flexible Harmonic Rhythm and Controllable Harmonic Density},
-  author={Shangda Wu and Yue Yang and Zhaowen Wang and Xiaobing Li and Maosong Sun},
-  year={2023},
-  eprint={2112.11122},
-  archivePrefix={arXiv},
-  primaryClass={cs.SD},
-  url={https://arxiv.org/abs/2112.11122},
+  title         = {Generating Chord Progression from Melody with Flexible Harmonic Rhythm and Controllable Harmonic Density},
+  author        = {Shangda Wu and Yue Yang and Zhaowen Wang and Xiaobing Li and Maosong Sun},
+  year          = {2023},
+  eprint        = {2112.11122},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.SD},
+  url           = {https://arxiv.org/abs/2112.11122},
 }
 ```
 
+---
 
+## License
 
+This project is distributed under the **MIT License**, inherited from the original [AutoHarmonizer](https://github.com/sander-wood/autoharmonizer) repository.
 
+> Copyright © 2021 Sander Wood — original author and copyright holder.
+> Modifications and additions in this fork are also released under the MIT License.
 
-
+See [LICENSE](LICENSE) for the full text.

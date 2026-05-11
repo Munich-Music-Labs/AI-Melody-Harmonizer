@@ -1,4 +1,7 @@
 # requirements.txt:
+# Core (CPU-only) install. Works on macOS, Linux and Windows.
+# For GPU training on Linux + NVIDIA, also install requirements-gpu.txt:
+#   pip install -r requirements.txt -r requirements-gpu.txt
 
 # Core ML stack - Modern TensorFlow with numpy2 support
 tensorflow>=2.18.0
@@ -11,10 +14,10 @@ music21>=9.1.0
 tqdm>=4.66.1
 
 # Optional: your custom or local package
-samplings  # replace with exact version or local path if needed
-matplotlib
+samplings>=0.1.7  # replace with exact version or local path if needed
+matplotlib>=3.10.8
 
-# NVIDIA GPU libraries (CUDA 12 - required for TensorFlow GPU support)
-nvidia-cudnn-cu12
-nvidia-cuda-nvrtc-cu12
-nvidia-cublas-cu12
+# Web UI backend
+fastapi>=0.115
+uvicorn[standard]>=0.32
+python-multipart>=0.0.9

@@ -79,7 +79,7 @@ def generate_chord(chord_model, melody_data, beat_data, key_data,
             }
             
             pred_probs = chord_model.predict(inputs, verbose=0)[0] # Shape (num_chords,)
-            
+
             # --- SAMPLING STRATEGY ---
             prev_chord_idx = song_chord[-1]
             current_beat = padded_beat[t]
@@ -133,26 +133,34 @@ def export_music(score, beat_data, chord_data, filename,
             offset += 0.25
             pre = lbl
 
-    new_measures = []
-    offsets = []
-    h_idx = 0
-    for m in score:
-        if isinstance(m, stream.Measure):
-            new_m = deepcopy(m)
-            offsets.append(m.offset)
-            elems = []
-            for el in new_m:
-                while h_idx < len(harmony_list) and el.offset + m.offset >= harmony_list[h_idx].offset:
-                    harmony_list[h_idx].offset -= m.offset
-                    elems.append(harmony_list[h_idx])
-                    h_idx += 1
-                elems.append(el)
-            new_m.elements = elems
-            new_measures.append(new_m)
+    # Build the output by deep-copying the original Part once (preserves clefs,
+    # key/time signatures, instruments, repeat brackets, slurs, etc.) and then
+    # inserting ChordSymbols into the right measure at the right local offset.
+    # We deliberately do NOT rebuild measures via `Stream.elements = [...]`,
+    # because that path resets every existing element's offset to 0.
+    new_part = deepcopy(score)
+    measures_in_part = list(new_part.getElementsByClass(stream.Measure))
 
-    final_score = stream.Score(new_measures)
-    for i, m in enumerate(final_score):
-        m.offset = offsets[i]
+    h_idx = 0
+    for m_idx, new_m in enumerate(measures_in_part, start=1):
+        m_start = float(new_m.offset)
+        m_qlen = float(new_m.quarterLength) if new_m.quarterLength else float(new_m.highestTime)
+        is_last = (m_idx == len(measures_in_part))
+        m_end = m_start + m_qlen
+
+        while h_idx < len(harmony_list) and (
+            harmony_list[h_idx].offset < m_end
+            or (is_last and harmony_list[h_idx].offset <= m_end)
+        ):
+            global_off = float(harmony_list[h_idx].offset)
+            local_off = max(0.0, global_off - m_start)
+            if m_qlen > 0 and local_off >= m_qlen:
+                local_off = max(0.0, m_qlen - 0.25)
+            new_m.insert(local_off, harmony_list[h_idx])
+            h_idx += 1
+
+    final_score = stream.Score()
+    final_score.insert(0, new_part)
 
     if water_mark:
         final_score = watermark(final_score, stem)

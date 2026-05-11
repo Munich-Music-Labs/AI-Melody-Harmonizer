@@ -83,7 +83,7 @@ This project builds upon and enhances the excellent original work.
 
 ### Repository Cleanup
 
-- Switched dependency and environment management to [uv](https://docs.astral.sh/uv/) — `pyproject.toml` + `uv.lock` are the source of truth, with Python 3.10 pinned via `.python-version`. A `requirements.txt` is kept as a pip fallback.
+- Switched dependency and environment management to [uv](https://docs.astral.sh/uv/) — `pyproject.toml` + `uv.lock` are the source of truth, with Python 3.10 pinned via `.python-version`. CUDA libraries are now an opt-in `gpu` extra (`uv sync --extra gpu`) so the project installs cleanly on macOS for inference and on Linux GPU machines for training. A `requirements.txt` (+ optional `requirements-gpu.txt`) is kept as a pip fallback.
 - Modularized `model.py` structure and removed redundant logic in data loading.
 - Removed non-essential artefacts (`.bin`) from git; generation workflow is now code-driven.
 - Migrated datasets to `.tgz` archives.
@@ -94,23 +94,35 @@ This project builds upon and enhances the excellent original work.
 
 This project uses [**uv**](https://docs.astral.sh/uv/) for dependency and environment management. Python 3.10 is pinned via `.python-version` and uv will pick it up automatically.
 
+> **CPU vs. GPU.** The CUDA libraries needed for TensorFlow GPU acceleration only ship Linux/Windows wheels. They are therefore packaged as an opt-in `gpu` extra. The intended split is: **train on a GPU machine (e.g. Google Cloud) with the `gpu` extra, harmonize (inference) anywhere — including macOS — with the default CPU install.**
+
 ### Recommended: uv
 
 ```bash
 # Install uv once: https://docs.astral.sh/uv/getting-started/installation/
+
+# CPU only (Mac / dev / harmonization)
 uv sync
+
+# With CUDA (Linux + NVIDIA GPU, e.g. Google Cloud training VM)
+uv sync --extra gpu
 ```
 
 `uv sync` reads `pyproject.toml` + `uv.lock`, creates a virtual environment in `.venv/`, and installs every dependency at the locked version. You don't need to activate the venv manually — prefix commands with `uv run` (see below).
 
 ### Alternative: pip + venv
 
-If you'd rather not use uv, a `requirements.txt` is kept as a fallback:
+If you'd rather not use uv, `requirements.txt` (+ optional `requirements-gpu.txt`) is kept as a fallback:
 
 ```bash
 python3 -m venv shared-venv
 source shared-venv/bin/activate
+
+# CPU only
 pip install -r requirements.txt
+
+# With CUDA (Linux + NVIDIA GPU)
+pip install -r requirements.txt -r requirements-gpu.txt
 ```
 
 In this case, activate `shared-venv` before running any of the commands below and drop the `uv run` prefix.
@@ -135,6 +147,32 @@ In this case, activate `shared-venv` before running any of the commands below an
 4. Harmonized files are saved to the `outputs/` folder.
 
 > **Tip:** Adjust `RHYTHM_DENSITY ∈ [0, 1]` in `config.py` to control how many chords are generated. Higher values produce denser progressions.
+
+---
+
+## Web UI
+
+A small React + FastAPI app lets you drop a MIDI file in a browser, pick a genre, and download the harmonized MIDI.
+
+### Architecture
+
+- `backend/` — FastAPI server (`/api/genres`, `/api/harmonize`) that wraps `harmonizer.py` and caches one model per genre in memory.
+- `frontend/` — Vite + React + TypeScript + Tailwind UI with drag-and-drop, genre selector, and download button.
+- `midi_io/` — `music21`-based helpers used by the backend: `midi_to_musicxml` (pre-processing) and `musicxml_to_midi` (post-processing, realizes chord symbols as a block-chord accompaniment track).
+
+### Run in development (two terminals)
+
+```bash
+# Terminal 1: backend on :8000
+uv run uvicorn backend.app:app --reload --port 8000
+
+# Terminal 2: frontend on :5173 (proxies /api -> :8000)
+cd frontend
+npm install        # first time only
+npm run dev
+```
+
+Open <http://localhost:5173>. The genre dropdown auto-populates from `weights/baseline/weights.keras` and any `weights/genres/<name>/weights.keras` it finds, so just train new genres and they'll appear in the UI.
 
 ---
 

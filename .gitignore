@@ -1,8 +1,8 @@
 # Keep folder structure, ignore files inside
-datasets/**
-!datasets/
-!datasets/**/
-!datasets/**/.gitkeep
+#datasets/**
+#!datasets/
+#!datasets/**/
+#!datasets/**/.gitkeep
 
 outputs/**
 !outputs/
